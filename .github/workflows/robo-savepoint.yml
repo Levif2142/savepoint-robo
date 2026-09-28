@@ -1,0 +1,37 @@
+name: Robô Save Point
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # a cada 10 minutos (o GitHub pode atrasar alguns minutos)
+  workflow_dispatch: {}       # botão "Run workflow" para rodar na hora
+
+concurrency:
+  group: robo-savepoint
+  cancel-in-progress: false   # nunca roda duas vezes ao mesmo tempo
+
+jobs:
+  verificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run verificar
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+
+  # O GitHub desliga agendamentos de repositórios públicos sem atividade por 60 dias.
+  # Este passo mantém o robô ligado (sem criar commits).
+  manter-ligado:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - uses: liskin/gh-workflow-keepalive@v1
