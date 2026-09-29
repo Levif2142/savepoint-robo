@@ -23,11 +23,14 @@ const MAX_TENTATIVAS = 3;
 /* ---------- utilidades ---------- */
 const normalizar = (s) => String(s || "").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase()
   .replace(/&/g, "e").replace(/[^\p{L}\p{N}]/gu, "");
-async function buscarJson(url, opcoes = {}) {
+const esperar = (ms) => new Promise(r => setTimeout(r, ms));
+async function buscarJson(url, opcoes = {}, tentativa = 1) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const r = await fetch(url, { ...opcoes, signal: ctrl.signal, headers: { "Accept": "application/json", ...(opcoes.headers || {}) } });
+    const r = await fetch(url, { ...opcoes, signal: ctrl.signal,
+      headers: { "Accept": "application/json", "User-Agent": "SavePointRobo/1.0", ...(opcoes.headers || {}) } });
+    if ((r.status === 429 || r.status >= 500) && tentativa < 3) { await esperar(2000 * tentativa); return buscarJson(url, opcoes, tentativa + 1); }
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return await r.json();
   } finally { clearTimeout(t); }
@@ -88,7 +91,8 @@ async function checarTMDB(o) {
 async function checarLivros(o) {
   let achou = false, adulto = false;
   for (const nome of nomesDaObra(o).slice(0, 2)) {
-    const r = await buscarJson(`https://www.googleapis.com/books/v1/volumes?maxResults=8&q=${encodeURIComponent(`intitle:"${nome}"`)}`);
+    const chave = process.env.GOOGLE_BOOKS_KEY ? `&key=${process.env.GOOGLE_BOOKS_KEY}` : "";
+    const r = await buscarJson(`https://www.googleapis.com/books/v1/volumes?maxResults=8&q=${encodeURIComponent(`intitle:"${nome}"`)}${chave}`);
     for (const it of r?.items || []) {
       const v = it.volumeInfo || {};
       if (!bateNome([v.title, [v.title, v.subtitle].filter(Boolean).join(" ")], o)) continue;
@@ -132,8 +136,10 @@ async function verificar(o) {
   const fontes = (await Promise.allSettled(tarefas)).map((r, i) => r.status === "fulfilled" ? r.value
     : { fonte: `fonte ${i + 1}`, externa: true, consultada: false, adulto: false, detalhe: `falhou: ${r.reason?.message || r.reason}` });
   const adulto = fontes.some(f => f.adulto);
-  // Filmes sem chave do TMDB contam com a capa analisada; nas outras categorias precisa de uma fonte externa
-  const decisivas = fontes.filter(f => f.consultada && (f.externa || (o.categoria === "filme" && f.fonte.startsWith("capa"))));
+  // Filmes e livros: se a base externa não responder, a capa analisada também vale como verificação.
+  // Animes, mangás e manhwas precisam do AniList (as capas são desenhos, onde o modelo erra mais).
+  const capaVale = ["filme", "livro"].includes(o.categoria);
+  const decisivas = fontes.filter(f => f.consultada && (f.externa || (capaVale && f.fonte.startsWith("capa"))));
   return { status: adulto ? "adulto" : decisivas.length ? "livre" : "indefinido", fontes };
 }
 
@@ -156,7 +162,8 @@ async function aplicar(ref, obra, { status, fontes }) {
     await lote.commit();
   }
   // O repositório é público e os registros do Actions também: por privacidade, só o ID e o resultado aparecem aqui
-  console.log(`• obra ${ref.id} [${obra.categoria}] → ${status}`);
+  console.log(`• obra ${ref.id} [${obra.categoria}] → ${status}` + (status === "indefinido"
+    ? ` (${fontes.filter(f => !f.consultada).map(f => `${f.fonte}: ${f.detalhe}`).join("; ")})` : ""));
   return status;
 }
 
