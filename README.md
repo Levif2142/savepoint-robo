@@ -28,6 +28,7 @@ No repositório: **Settings → Secrets and variables → Actions → New reposi
 |---|---|
 | `FIREBASE_SERVICE_ACCOUNT` | o conteúdo inteiro do arquivo `.json` (abra no Bloco de Notas, copie tudo e cole) |
 | `TMDB_KEY` | *(opcional)* chave gratuita do themoviedb.org para verificar filmes |
+| `GOOGLE_BOOKS_KEY` | *(opcional, recomendado)* chave de API do Google Cloud com a **Books API** ativada. Sem ela, o Google costuma limitar as consultas vindas do GitHub e os livros são verificados só pela capa |
 
 Os segredos ficam criptografados e **não aparecem** para quem visita o repositório,
 mesmo ele sendo público.

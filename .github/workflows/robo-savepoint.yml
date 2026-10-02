@@ -26,6 +26,7 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
+          GOOGLE_BOOKS_KEY: ${{ secrets.GOOGLE_BOOKS_KEY }}
 
   # O GitHub desliga agendamentos de repositórios públicos sem atividade por 60 dias.
   # Este passo mantém o robô ligado (sem criar commits).

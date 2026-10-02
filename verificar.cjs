@@ -72,13 +72,14 @@ async function checarAniList(o) {
 
 /* ---------- 3) TMDB: filmes (precisa do segredo TMDB_KEY) ---------- */
 async function checarTMDB(o) {
+  const serie = o.categoria === "serie";
   const chave = process.env.TMDB_KEY;
   if (!chave) return { fonte: "TMDB", externa: true, consultada: false, adulto: false, detalhe: "sem chave" };
   let achou = false, adulto = false;
   for (const nome of nomesDaObra(o).slice(0, 3)) {
-    const r = await buscarJson(`https://api.themoviedb.org/3/search/movie?include_adult=true&language=pt-BR&query=${encodeURIComponent(nome)}&api_key=${chave}`);
+    const r = await buscarJson(`https://api.themoviedb.org/3/search/${serie ? "tv" : "movie"}?include_adult=true&language=pt-BR&query=${encodeURIComponent(nome)}&api_key=${chave}`);
     for (const f of r?.results || []) {
-      if (!bateNome([f.title, f.original_title], o)) continue;
+      if (!bateNome(serie ? [f.name, f.original_name] : [f.title, f.original_title], o)) continue;
       achou = true;
       if (f.adult) { adulto = true; break; }
     }
@@ -131,14 +132,15 @@ async function checarCapa(o) {
 async function verificar(o) {
   const tarefas = [checarPalavras(o), checarCapa(o)];
   if (["anime", "manga", "manhwa"].includes(o.categoria)) tarefas.push(checarAniList(o));
-  if (o.categoria === "filme") tarefas.push(checarTMDB(o));
+  if (o.categoria === "filme" || o.categoria === "serie") tarefas.push(checarTMDB(o));
   if (o.categoria === "livro") tarefas.push(checarLivros(o));
   const fontes = (await Promise.allSettled(tarefas)).map((r, i) => r.status === "fulfilled" ? r.value
     : { fonte: `fonte ${i + 1}`, externa: true, consultada: false, adulto: false, detalhe: `falhou: ${r.reason?.message || r.reason}` });
   const adulto = fontes.some(f => f.adulto);
   // Filmes e livros: se a base externa não responder, a capa analisada também vale como verificação.
   // Animes, mangás e manhwas precisam do AniList (as capas são desenhos, onde o modelo erra mais).
-  const capaVale = ["filme", "livro"].includes(o.categoria);
+  // Jogos não têm base pública de classificação: valem capa e palavras-chave (e a moderação)
+  const capaVale = ["filme", "livro", "serie", "jogo"].includes(o.categoria);
   const decisivas = fontes.filter(f => f.consultada && (f.externa || (capaVale && f.fonte.startsWith("capa"))));
   return { status: adulto ? "adulto" : decisivas.length ? "livre" : "indefinido", fontes };
 }
@@ -148,9 +150,19 @@ async function aplicar(ref, obra, { status, fontes }) {
   const dados = {
     verificacao: { status, origem: "robo", fontes, tentativas, verificadoEm: FieldValue.serverTimestamp() },
     conteudoAdulto: status === "adulto",
-    visibilidade: status === "adulto" ? "privada" : status === "livre" ? "publica" : "pendente"
+    visibilidade: status === "adulto" ? "privada" : status === "livre" ? "publica" : "pendente",
+    // os aparelhos baixam só as obras alteradas: a data precisa mudar quando a obra é aprovada
+    atualizadoEm: FieldValue.serverTimestamp()
   };
   await ref.update(dados);
+  // obra que já era pública e virou privada: avisa os aparelhos para tirarem do catálogo guardado
+  if (status === "adulto" && (obra.visibilidade || "publica") === "publica") {
+    await db.runTransaction(async (tx) => {
+      const r = db.doc("sistema/catalogo"), s = await tx.get(r);
+      const lista = [...(s.exists ? s.data().removidos || [] : []).filter(x => x !== ref.id), ref.id].slice(-500);
+      tx.set(r, { removidos: lista, atualizadoEm: FieldValue.serverTimestamp() });
+    });
+  }
   if (status === "adulto") {
     const lote = db.batch();
     for (const c of obra.chaves || []) {
