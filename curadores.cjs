@@ -17,9 +17,36 @@ const { FieldValue, Timestamp } = admin.firestore;
 
 const MIN_CURADOR = 5, TOP_CURADORES = 3;
 
+// Uma vez só: marca no perfil de quem JÁ tinha informado a data de nascimento o campo
+// idadeInformada:true (o app passou a usar esse campo para avisar quando alguém ainda não
+// pode receber conversas). A data em si continua privada; nada além do "sim" vai para o perfil.
+async function marcarIdadesAntigas(ref, estado) {
+  if (estado.idadesMarcadas === true) return;
+  let n = 0, ultimo = null;
+  for (;;) {
+    let q = db.collectionGroup("privado").orderBy(admin.firestore.FieldPath.documentId()).limit(400);
+    if (ultimo) q = q.startAfter(ultimo);
+    const snap = await q.get();
+    if (snap.empty) break;
+    const lote = db.batch(); let nesteLote = 0;
+    for (const d of snap.docs) {
+      const perfilRef = d.ref.parent.parent && d.ref.parent.parent.parent.id === "usuarios" ? db.doc(`perfis/${d.ref.parent.parent.id}`) : null;
+      if (d.id !== "idade" || !perfilRef) continue;
+      if (!(await perfilRef.get()).exists) continue;
+      lote.set(perfilRef, { idadeInformada: true }, { merge: true }); nesteLote++;
+    }
+    if (nesteLote) await lote.commit();
+    n += nesteLote; ultimo = snap.docs[snap.docs.length - 1];
+    if (snap.size < 400) break;
+  }
+  await ref.set({ idadesMarcadas: true }, { merge: true });
+  console.log(`Perfis marcados com "data de nascimento informada": ${n}`);
+}
+
 (async () => {
   const ref = db.doc("sistema/curadores");
   const estado = (await ref.get()).data() || {};
+  try { await marcarIdadesAntigas(ref, estado); estado.idadesMarcadas = true; } catch (e) { console.error("Não foi possível marcar as idades antigas (tenta de novo na próxima rodada):", e.message); }
   const ultima = estado.calculadoEm;   // Timestamp
   let mudou = !ultima || Date.now() - ultima.toMillis() > 24 * 3600 * 1000 || process.env.CURADORES_FORCAR === "1";
   if (!mudou) {
@@ -48,7 +75,7 @@ const MIN_CURADOR = 5, TOP_CURADORES = 3;
   ordem.forEach(([, n], i) => posicoes.push(i > 0 && n === ordem[i - 1][1] ? posicoes[i - 1] : i + 1));
   const ranking = ordem.map(([uid, n], i) => ({ uid, n, pos: posicoes[i] })).filter(r => r.pos <= TOP_CURADORES);
   await ref.set({ ranking, aprovadas, pendentes, minimo: MIN_CURADOR, obrasContadas: snap.size,
-    calculadoEm: Timestamp.now(), atualizadoEm: FieldValue.serverTimestamp() });
+    idadesMarcadas: estado.idadesMarcadas === true, calculadoEm: Timestamp.now(), atualizadoEm: FieldValue.serverTimestamp() });
   // por privacidade, o registro público do GitHub mostra só os números
   console.log(`Curadores: ${snap.size} obras contadas, ${Object.keys(aprovadas).length} membros com obras aprovadas, top: ${ranking.map(r => `${r.pos}º (${r.n})`).join(", ") || "ninguém com o mínimo"}`);
   process.exit(0);
