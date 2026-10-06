@@ -2,7 +2,7 @@
    MODERAÇÃO AUTOMÁTICA DO SAVE POINT (camada 2) — roda junto com o robô
    A cada rodada, lê SÓ o que foi escrito desde a rodada anterior:
      • comentários nas memórias
-     • mensagens das conversas com lojas
+     • mensagens das conversas com lojas e entre membros
      • memórias compartilhadas (novas ou editadas)
    e procura insultos homofóbicos, racistas, transfóbicos e incitação ao ódio,
    inclusive disfarçados (v1ad0, v i a d o, viaaado).
@@ -85,9 +85,14 @@ async function mensagens(cursor, cont) {
     const conv = (await convRef.get()).data() || {};
     const lote = db.batch();
     lote.set(convRef, { denunciada: true }, { merge: true });   // a moderação só lê conversas denunciadas
-    lote.set(db.doc(`denuncias/robo_conversa_${convRef.id}__${d.id}`), denuncia({
-      tipo: "conversa", alvoId: convRef.id, alvoUid: m.de,
-      resumo: `Mensagem ${m.papel === "loja" ? "da loja" : "de " + (conv.clienteNome || "cliente")} na conversa com ${conv.lojaNome || "loja"}: ${trecho(m.texto, 120)}`,
+    // conversa com loja (/conversas) ou entre membros (/conversasMembros)
+    const entreMembros = convRef.parent.id === "conversasMembros";
+    const autor = entreMembros ? (m.de === conv.uidA ? conv.nomeA : conv.nomeB) || "membro" : null;
+    lote.set(db.doc(`denuncias/robo_${entreMembros ? "conversaMembro" : "conversa"}_${convRef.id}__${d.id}`), denuncia({
+      tipo: entreMembros ? "conversaMembro" : "conversa", alvoId: convRef.id, alvoUid: m.de,
+      resumo: entreMembros
+        ? `Mensagem de ${autor} na conversa entre ${conv.nomeA || "membro"} e ${conv.nomeB || "membro"}: ${trecho(m.texto, 120)}`
+        : `Mensagem ${m.papel === "loja" ? "da loja" : "de " + (conv.clienteNome || "cliente")} na conversa com ${conv.lojaNome || "loja"}: ${trecho(m.texto, 120)}`,
       achado, acao: "A conversa foi liberada para a moderação ler e conferir o contexto."
     }));
     await lote.commit();
