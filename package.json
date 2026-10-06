@@ -2,9 +2,9 @@
   "name": "savepoint-robo",
   "version": "1.0.0",
   "private": true,
-  "description": "Robô do Save Point: verifica se obras cadastradas são conteúdo adulto",
+  "description": "Robô do Save Point: verifica obras adultas e procura discurso de ódio na comunidade",
   "main": "verificar.cjs",
-  "scripts": { "verificar": "node verificar.cjs" },
+  "scripts": { "verificar": "node verificar.cjs", "moderar": "node moderar.cjs", "lancamentos": "node lancamentos.cjs", "curadores": "node curadores.cjs" },
   "engines": { "node": ">=20" },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",

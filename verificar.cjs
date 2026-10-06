@@ -155,6 +155,14 @@ async function aplicar(ref, obra, { status, fontes }) {
     atualizadoEm: FieldValue.serverTimestamp()
   };
   await ref.update(dados);
+  // obra aprovada que estava na lista de removidas (foi reavaliada): tira da lista
+  if (status === "livre") {
+    await db.runTransaction(async (tx) => {
+      const r = db.doc("sistema/catalogo"), s = await tx.get(r);
+      const lista = s.exists ? s.data().removidos || [] : [];
+      if (lista.includes(ref.id)) tx.set(r, { removidos: lista.filter(x => x !== ref.id), atualizadoEm: FieldValue.serverTimestamp() });
+    });
+  }
   // obra que já era pública e virou privada: avisa os aparelhos para tirarem do catálogo guardado
   if (status === "adulto" && (obra.visibilidade || "publica") === "publica") {
     await db.runTransaction(async (tx) => {

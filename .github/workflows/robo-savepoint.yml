@@ -3,7 +3,12 @@ name: Robô Save Point
 on:
   schedule:
     - cron: "*/10 * * * *"   # a cada 10 minutos (o GitHub pode atrasar alguns minutos)
-  workflow_dispatch: {}       # botão "Run workflow" para rodar na hora
+  workflow_dispatch:          # botão "Run workflow" para rodar na hora
+    inputs:
+      forcar_catalogo:
+        description: "Republicar o catálogo completo na Cloudflare agora"
+        type: boolean
+        default: false
 
 concurrency:
   group: robo-savepoint
@@ -12,14 +17,14 @@ concurrency:
 jobs:
   verificar:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run verificar
@@ -27,6 +32,33 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
           GOOGLE_BOOKS_KEY: ${{ secrets.GOOGLE_BOOKS_KEY }}
+      # Moderação automática: procura discurso de ódio nos comentários, mensagens e memórias novos.
+      # "continue-on-error": se falhar (ex.: índice ainda criando), não impede o resto do robô.
+      - run: node moderar.cjs
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      # Ranking de curadores: conta as obras aprovadas de cada membro (só quando o catálogo mudou)
+      - run: node curadores.cjs
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+      # Calendário automático: no penúltimo dia do mês, coloca no calendário os lançamentos do mês seguinte
+      # (estreias de temporada e episódios finais de animes e séries, estreias de filmes no Brasil)
+      - run: node lancamentos.cjs
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          TMDB_KEY: ${{ secrets.TMDB_KEY }}
+      # Publica o catálogo público na Cloudflare Pages (no máximo a cada 3 h, só se algo mudou)
+      - run: node exportar.cjs
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CATALOGO_PROJETO: ${{ vars.CATALOGO_PROJETO }}
+          CATALOGO_URL: ${{ vars.CATALOGO_URL }}
+          CATALOGO_FORCAR: ${{ inputs.forcar_catalogo && '1' || '' }}
 
   # O GitHub desliga agendamentos de repositórios públicos sem atividade por 60 dias.
   # Este passo mantém o robô ligado (sem criar commits).
