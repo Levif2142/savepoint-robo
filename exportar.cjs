@@ -58,7 +58,7 @@ function paraArquivo(id, d, capaArq) {
   };
   if (d.capitulosVolumes) o.capitulosVolumes = d.capitulosVolumes;
   if (d.temporadas === true) o.temporadas = true;
-  if (typeof d.isbn === "string" && /^97[89]\d{10}$/.test(d.isbn)) o.isbn = d.isbn;
+  if (typeof d.isbn === "string" && /^(97[89]\d{10}|S\d{8}P)$/.test(d.isbn)) o.isbn = d.isbn;
   if (Array.isArray(d.plataformas) && d.plataformas.length) o.plataformas = d.plataformas;
   if (typeof d.trailer === "string" && /^[A-Za-z0-9_-]{11}$/.test(d.trailer)) o.trailer = d.trailer;
   return o;
