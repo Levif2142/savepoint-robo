@@ -50,6 +50,12 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
+      # Moedas Save Point: credita as moedas das ações (obras, conclusões, memórias, presença, conquistas).
+      # Só o robô credita; o app apenas gasta (as regras do Firestore conferem os preços).
+      - run: node moedas.cjs
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       # Publica o catálogo público na Cloudflare Pages (no máximo a cada 3 h, só se algo mudou)
       - run: node exportar.cjs
         env:

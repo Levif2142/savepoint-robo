@@ -80,6 +80,28 @@ O app mostra os selos "Top 1/2/3 Curador" a partir daí, então **todos veem o m
 - Obras ainda "Verificando…" não contam (o perfil da pessoa mostra quantas estão em verificação).
 - Só recalcula quando alguma obra mudou ou uma vez por dia (economiza leituras).
 
+## Moedas Save Point (`moedas.cjs`)
+
+Quem credita as moedas é só o robô (a cada rodada, ~30 min). O app apenas **gasta**: as regras do Firestore conferem o preço de cada item, o saldo e se a pessoa já tem o item.
+
+| Ação | Moedas |
+|---|---|
+| Boas-vindas (primeira vez que abre a loja) | +50 |
+| Obra cadastrada e aprovada (até 10 por dia) | +20 |
+| Obra concluída na estante (até 10 por dia) | +10 |
+| Memória compartilhada (até 3 por dia) | +5 |
+| Entrou no app no dia | +2 |
+| 7 dias seguidos entrando | +20 |
+| Conquista nova | +15 |
+| Top 3 dos curadores, na virada do mês | +200 |
+
+- Cada crédito tem uma chave única no extrato (`obra_<id>`, `memoria_<id>`, `dia_<data>`…): a mesma ação nunca paga duas vezes.
+- O progresso fica em `/sistema/moedasAuto` (cursores de cada etapa e o resultado da última rodada).
+- Precisa dos índices do `firestore.indexes.json` (`estante.atualizadoEm` e `checkin.em` em grupo de coleções). Se faltar, o registro mostra “Falta um índice”: rode `firebase deploy --only firestore`.
+- Para dar ou tirar moedas na mão (ex.: fraude), edite `carteiras/<uid>` no console do Firebase (campo `saldo`) e, se quiser, crie uma linha em `carteiras/<uid>/extrato` com `valor`, `motivo` e `criadoEm`.
+- **Fim do período alfa:** quando a administração toca em *Moderação → Fim do período alfa → Encerrar período alfa*, a próxima rodada zera o XP e o nível de todos os membros que já tinham conta e entrega a Coleção Alfa (avatar, moldura, banner e tema). O andamento aparece na própria seção da moderação e em `/sistema/alfa`.
+- Ao mudar o preço de um item no app (`ITENS_LOJA`), mude também em `precosLoja()` no `firestore.rules`.
+
 ## Calendário automático de lançamentos (`lancamentos.cjs`)
 
 No **penúltimo dia de cada mês** (horário de Brasília), o robô procura os lançamentos do mês seguinte
