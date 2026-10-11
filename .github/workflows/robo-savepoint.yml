@@ -21,8 +21,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -50,6 +50,11 @@ jobs:
         env:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           TMDB_KEY: ${{ secrets.TMDB_KEY }}
+      # Capas pendentes: baixa no servidor as capas que o navegador não conseguiu baixar (AniList, Wikipédia…)
+      - run: node capas.cjs
+        continue-on-error: true
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
       # Moedas Save Point: credita as moedas das ações (obras, conclusões, memórias, presença, conquistas).
       # Só o robô credita; o app apenas gasta (as regras do Firestore conferem os preços).
       - run: node moedas.cjs

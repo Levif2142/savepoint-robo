@@ -80,6 +80,10 @@ O app mostra os selos "Top 1/2/3 Curador" a partir daí, então **todos veem o m
 - Obras ainda "Verificando…" não contam (o perfil da pessoa mostra quantas estão em verificação).
 - Só recalcula quando alguma obra mudou ou uma vez por dia (economiza leituras).
 
+## Capas pendentes (`capas.cjs`)
+
+Alguns sites de imagem não deixam o navegador baixar a capa (proteção chamada CORS). Quando isso acontece no Cadastro em lote ou no cadastro pela busca, o app guarda o link em `capaPendente` e o robô, na próxima rodada, baixa a imagem no servidor, reduz para 360 × 540, converte em JPEG e grava na obra. Só aceita links da AniList, Open Library, TVmaze, Google Books e Wikipédia. Depois de 3 tentativas sem sucesso, desiste (a capa pode ser colocada à mão).
+
 ## Moedas Save Point (`moedas.cjs`)
 
 Quem credita as moedas é só o robô (a cada rodada, ~30 min). O app apenas **gasta**: as regras do Firestore conferem o preço de cada item, o saldo e se a pessoa já tem o item.

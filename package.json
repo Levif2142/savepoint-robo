@@ -4,12 +4,21 @@
   "private": true,
   "description": "Robô do Save Point: verifica obras adultas e procura discurso de ódio na comunidade",
   "main": "verificar.cjs",
-  "scripts": { "verificar": "node verificar.cjs", "moderar": "node moderar.cjs", "lancamentos": "node lancamentos.cjs", "curadores": "node curadores.cjs" },
-  "engines": { "node": ">=20" },
+  "scripts": {
+    "verificar": "node verificar.cjs",
+    "moderar": "node moderar.cjs",
+    "lancamentos": "node lancamentos.cjs",
+    "curadores": "node curadores.cjs",
+    "capas": "node capas.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@tensorflow/tfjs": "^4.22.0",
     "firebase-admin": "^12.6.0",
     "jpeg-js": "^0.4.4",
-    "nsfwjs": "^4.3.0"
+    "nsfwjs": "^4.3.0",
+    "sharp": "^0.33.5"
   }
 }
