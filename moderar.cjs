@@ -14,12 +14,18 @@
      termo de ATENÇÃO → só abre a denúncia; o conteúdo continua no ar
      conversas (os dois níveis) → a conversa é marcada como denunciada, para a moderação poder ler o contexto
 
+   Desenhos e spam feitos com caracteres (braille ⣿, blocos █, "pixel art" de emojis, arte com símbolos,
+   linhas repetidas): a mensagem ou o comentário é APAGADO, a memória fica oculta e abre uma denúncia
+   "spam" para a moderação. Na primeira rodada com esta versão, o robô também varre as mensagens e os
+   comentários antigos (em partes, se houver muitos).
+
    O robô NUNCA suspende ninguém: quem decide é sempre a moderação, no app.
    O texto das pessoas não sai do Firebase (nada é enviado para serviços de fora)
    e os registros do GitHub mostram só IDs, nunca o texto.
    ===================================================================== */
 const admin = require("firebase-admin");
 const { analisar } = require("./lexico.cjs");
+const { motivoArte } = require("./arte.cjs");
 
 const conta = process.env.FIREBASE_SERVICE_ACCOUNT;
 if (!conta) { console.error("Falta o segredo FIREBASE_SERVICE_ACCOUNT."); process.exit(1); }
@@ -43,6 +49,49 @@ function denuncia({ tipo, alvoId, alvoUid, resumo, achado, acao }) {
   };
 }
 
+function denunciaArte({ tipo, alvoId, alvoUid, resumo, motivo, acao }) {
+  return {
+    autor: "robo", origem: "robo", tipo, alvoId, alvoUid: alvoUid || "",
+    motivo: "spam", nivel: "grave", termos: [motivo],
+    detalhe: trecho(`Desenho ou spam feito com caracteres (${motivo}). ${acao}`, 500),
+    resumo: trecho(resumo, 200), status: "aberta", criadoEm: FieldValue.serverTimestamp()
+  };
+}
+const AVISO_REMOVIDA = "🚫 Mensagem removida (desenho ou spam com caracteres)";
+// apaga uma mensagem com desenho/spam, corrige a prévia da conversa e abre a denúncia
+async function removerMensagemArte(d, motivo, cont) {
+  const m = d.data(), convRef = d.ref.parent.parent;
+  const conv = (await convRef.get()).data() || {};
+  const entreMembros = convRef.parent.id === "conversasMembros";
+  const autor = entreMembros ? (m.de === conv.uidA ? conv.nomeA : conv.nomeB) || "membro" : (m.papel === "loja" ? conv.lojaNome : conv.clienteNome) || "cliente";
+  const lote = db.batch();
+  lote.delete(d.ref);
+  const previa = { denunciada: true };
+  if (motivoArte(conv.ultimaMsg || "") || (conv.ultimaMsg && String(m.texto || "").startsWith(conv.ultimaMsg))) previa.ultimaMsg = AVISO_REMOVIDA;
+  lote.set(convRef, previa, { merge: true });
+  lote.set(db.doc(`denuncias/robo_arte_${entreMembros ? "conversaMembro" : "conversa"}_${convRef.id}__${d.id}`), denunciaArte({
+    tipo: entreMembros ? "conversaMembro" : "conversa", alvoId: convRef.id, alvoUid: m.de, motivo,
+    resumo: `Mensagem de ${autor} removida (${motivo})`,
+    acao: "A mensagem foi apagada automaticamente."
+  }));
+  await lote.commit();
+  cont.arte++;
+  console.log(`• mensagem ${convRef.id}/${d.id} → desenho/spam (apagada)`);
+}
+async function removerComentarioArte(d, motivo, cont) {
+  const c = d.data(), memId = d.ref.parent.parent.id, alvoId = `${memId}__${d.id}`;
+  const lote = db.batch();
+  lote.delete(d.ref);
+  lote.set(db.doc(`denuncias/robo_arte_comentario_${alvoId}`), denunciaArte({
+    tipo: "comentario", alvoId, alvoUid: c.uid, motivo,
+    resumo: `Comentário de ${c.autorNome || "Membro"} removido (${motivo})`,
+    acao: "O comentário foi apagado automaticamente."
+  }));
+  await lote.commit();
+  cont.arte++;
+  console.log(`• comentário ${alvoId} → desenho/spam (apagado)`);
+}
+
 // Busca o que chegou depois do cursor, em ordem, e devolve o novo cursor
 async function novos(consulta, campo, cursor) {
   const snap = await consulta.where(campo, ">", cursor).orderBy(campo).limit(POR_RODADA).get();
@@ -54,8 +103,11 @@ async function comentarios(cursor, cont) {
   const r = await novos(db.collectionGroup("comentarios"), "criadoEm", cursor);
   for (const d of r.docs) {
     if (!noTempo()) return { ...r, cursor: d.get("criadoEm") || r.cursor, cheio: true };
-    const c = d.data(), achado = analisar(c.texto);
+    const c = d.data();
     cont.lidos++;
+    const arte = motivoArte(c.texto, 20);
+    if (arte) { await removerComentarioArte(d, arte, cont); continue; }
+    const achado = analisar(c.texto);
     if (!achado) continue;
     const memId = d.ref.parent.parent.id, alvoId = `${memId}__${d.id}`;
     const lote = db.batch();
@@ -78,8 +130,11 @@ async function mensagens(cursor, cont) {
   const r = await novos(db.collectionGroup("mensagens"), "criadoEm", cursor);
   for (const d of r.docs) {
     if (!noTempo()) return { ...r, cursor: d.get("criadoEm") || r.cursor, cheio: true };
-    const m = d.data(), achado = analisar(m.texto);
+    const m = d.data();
     cont.lidos++;
+    const arte = motivoArte(m.texto, 20);
+    if (arte) { await removerMensagemArte(d, arte, cont); continue; }
+    const achado = analisar(m.texto);
     if (!achado) continue;
     const convRef = d.ref.parent.parent;
     const conv = (await convRef.get()).data() || {};
@@ -109,6 +164,21 @@ async function memorias(cursor, cont) {
     const m = d.data();
     cont.lidos++;
     if (m.oculta === true) continue;
+    const arte = motivoArte(m.texto, 80);
+    if (arte) {
+      const lote = db.batch();
+      lote.update(d.ref, { oculta: true, motivoModeracao: "Retirada automaticamente: desenho ou spam feito com caracteres.", moderadoEm: FieldValue.serverTimestamp() });
+      const quando = m.atualizadoEm?.toMillis?.() || Date.now();
+      lote.set(db.doc(`denuncias/robo_arte_memoria_${d.id}_${quando}`), denunciaArte({
+        tipo: "memoria", alvoId: d.id, alvoUid: m.uid, motivo: arte,
+        resumo: `Memória de ${m.autorNome || "Membro"} sobre ${m.obraNome || "obra"} ocultada (${arte})`,
+        acao: "A memória foi ocultada até a sua decisão."
+      }));
+      await lote.commit();
+      cont.arte++;
+      console.log(`• memória ${d.id} → desenho/spam (oculta)`);
+      continue;
+    }
     const achado = analisar(m.texto);
     if (!achado) continue;
     const lote = db.batch();
@@ -124,6 +194,30 @@ async function memorias(cursor, cont) {
     console.log(`• memória ${d.id} → ${achado.nivel}${achado.nivel === "grave" ? " (oculta)" : ""}`);
   }
   return r;
+}
+
+// Uma vez só: varre mensagens e comentários ANTIGOS (de antes desta versão) procurando desenhos/spam.
+// Vai do mais antigo ao mais novo, guardando onde parou; termina quando alcança o cursor normal.
+async function varrerArteAntiga(estado, novoEstado, cont) {
+  const feito = estado.arteVarrida || {};
+  const resultado = { ...feito };
+  for (const [nome, grupo, limite] of [["mensagens", "mensagens", estado.cursorMensagens], ["comentarios", "comentarios", estado.cursorComentarios]]) {
+    if (feito[nome] === true || !noTempo()) continue;
+    let cursor = feito[nome] || Timestamp.fromMillis(0);
+    while (noTempo()) {
+      const snap = await db.collectionGroup(grupo).where("criadoEm", ">", cursor).orderBy("criadoEm").limit(300).get();
+      for (const d of snap.docs) {
+        if (limite && d.get("criadoEm") && d.get("criadoEm").toMillis() > limite.toMillis()) break;
+        const arte = motivoArte(d.get("texto"), 20);
+        if (arte) await (grupo === "mensagens" ? removerMensagemArte(d, arte, cont) : removerComentarioArte(d, arte, cont));
+        cursor = d.get("criadoEm") || cursor;
+      }
+      const passou = snap.docs.length < 300 || (limite && cursor.toMillis() >= limite.toMillis());
+      if (passou) { resultado[nome] = true; break; }
+    }
+    if (resultado[nome] !== true) resultado[nome] = cursor;
+  }
+  novoEstado.arteVarrida = resultado;
 }
 
 // Comentários retidos há mais de 60 dias sem decisão: apaga de vez (não guardamos texto além do necessário)
@@ -142,7 +236,7 @@ async function limparQuarentena(cont) {
   const estado = (await controle.get()).data() || {};
   // primeira rodada: olha só as últimas 24 horas
   const padrao = Timestamp.fromMillis(Date.now() - 24 * 3600 * 1000);
-  const cont = { lidos: 0, grave: 0, atencao: 0, erros: 0 };
+  const cont = { lidos: 0, grave: 0, atencao: 0, arte: 0, erros: 0 };
   const novoEstado = {};
   const etapas = [
     ["cursorComentarios", comentarios],
@@ -163,6 +257,7 @@ async function limparQuarentena(cont) {
       } else console.error(`Erro em ${campo}:`, e.message);
     }
   }
+  try { await varrerArteAntiga(estado, novoEstado, cont); } catch (e) { cont.erros++; console.error("Erro na varredura de desenhos antigos:", e.message); }
   try { await limparQuarentena(cont); } catch (e) { console.error("Erro ao limpar a quarentena:", e.message); }
   await controle.set({ ...novoEstado, ultimaRodada: FieldValue.serverTimestamp(), ultimoResultado: { ...cont, pendente } }, { merge: true });
   console.log("Moderação automática:", cont, pendente ? "(continua na próxima rodada)" : "");

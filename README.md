@@ -98,8 +98,11 @@ Quem credita as moedas é só o robô (a cada rodada, ~30 min). O app apenas **g
 | 7 dias seguidos entrando | +20 |
 | Conquista nova | +15 |
 | Top 3 dos curadores, na virada do mês | +200 |
+| Jogos: Capivara Corredora (1 a cada 150 pontos, até 15) e Adivinhe pela capa (2 por acerto, até 20) | até 30 por dia, somando |
+| Top 3 do ranking semanal de cada jogo (virada na segunda-feira) | +100 / +60 / +40 |
 
 - Cada crédito tem uma chave única no extrato (`obra_<id>`, `memoria_<id>`, `dia_<data>`…): a mesma ação nunca paga duas vezes.
+- **Jogos:** o app grava `partidas/<id>` (início com a hora do servidor e o resultado). O robô confere se a pontuação é possível para o tempo jogado, paga (chave `jogo_<id>`), marca a partida como `paga` ou `recusada` e atualiza `/sistema/rankingJogos`. Partidas com mais de 7 dias são apagadas.
 - O progresso fica em `/sistema/moedasAuto` (cursores de cada etapa e o resultado da última rodada).
 - Precisa dos índices do `firestore.indexes.json` (`estante.atualizadoEm` e `checkin.em` em grupo de coleções). Se faltar, o registro mostra “Falta um índice”: rode `firebase deploy --only firestore`.
 - Para dar ou tirar moedas na mão (ex.: fraude), edite `carteiras/<uid>` no console do Firebase (campo `saldo`) e, se quiser, crie uma linha em `carteiras/<uid>/extrato` com `valor`, `motivo` e `criadoEm`.
@@ -139,3 +142,15 @@ Configuração (Settings → Secrets and variables → Actions):
 - Variables: `CATALOGO_PROJETO` (ex.: `savepoint-catalogo`) e `CATALOGO_URL` (ex.: `https://savepoint-catalogo.pages.dev`)
 
 Sem essas configurações, a exportação fica desligada e o app continua lendo o catálogo do Firestore.
+
+## Desenhos e spam com caracteres (`arte.cjs`, usado pelo `moderar.cjs`)
+
+Mensagens, comentários e memórias com "desenhos" feitos de caracteres são retirados automaticamente:
+braille (⣿), blocos e molduras (█▓▒─│), "pixel art" de emojis (🟩🟦⬛), mais de 30 emojis, arte com símbolos,
+a mesma linha repetida 5 vezes ou mais, o mesmo caractere repetido 40 vezes ou mais, e muitas linhas
+(20 em mensagens e comentários, 80 em memórias).
+
+- Mensagem ou comentário: é **apagado** e abre uma denúncia "spam" (🤖) para a moderação. A conversa fica marcada como denunciada e a prévia vira "🚫 Mensagem removida".
+- Memória: fica **oculta** até a moderação decidir.
+- Na primeira rodada desta versão, o robô também varre as mensagens e os comentários **antigos** (em partes, se forem muitos). O progresso fica em `/sistema/moderacaoAuto` → `arteVarrida`.
+- O app já bloqueia isso antes de enviar, e as regras do Firestore recusam no servidor.

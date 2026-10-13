@@ -15,6 +15,8 @@
      • 7 dias seguidos entrando no app ........................ +20
      • Conquista nova ......................................... +15
      • Top 3 dos curadores, na virada do mês .................. +200
+     • Jogos (Capivara Corredora e Adivinhe pela capa) ......... até 30 por dia, somando os dois
+     • Top 3 do ranking semanal de cada jogo ................... +100 / +60 / +40
 
    Fim do período alfa: quando a administração toca em "Encerrar período alfa" (grava /sistema/alfa),
    o robô zera o XP e o nível de todos os membros que já tinham conta e entrega a Coleção Alfa
@@ -42,7 +44,9 @@ const trecho = (t, n) => { const s = String(t || "").replace(/\s+/g, " ").trim()
 const cont = { creditos: 0, moedas: 0, pulados: 0, erros: 0 };
 
 /* Credita "valor" moedas para "uid" com a chave única "chave".
-   limite = { tipo:"memorias", max:3 } aplica o limite diário; extra = campos a mais na carteira. */
+   limite = { tipo:"memorias", max:3 } aplica o limite diário; extra = campos a mais na carteira.
+   limite = { tipo:"jogos", max:30, soma:true } limita a SOMA das moedas do dia (paga só o que couber).
+   Devolve quantas moedas foram creditadas (0 = nada). */
 async function creditar(uid, chave, valor, motivo, limite = null, extra = null) {
   if (!UID_OK.test(uid || "")) return false;
   const refC = db.doc(`carteiras/${uid}`), refE = refC.collection("extrato").doc(chave);
@@ -54,8 +58,10 @@ async function creditar(uid, chave, valor, motivo, limite = null, extra = null) 
       const dia = diaBR(Date.now());
       let lim = dados.limitesDia && dados.limitesDia.dia === dia ? { ...dados.limitesDia } : { dia };
       if (limite) {
-        if ((lim[limite.tipo] || 0) >= limite.max) return false;
-        lim[limite.tipo] = (lim[limite.tipo] || 0) + 1;
+        const usado = lim[limite.tipo] || 0;
+        if (usado >= limite.max) return false;
+        if (limite.soma) { valor = Math.min(valor, limite.max - usado); lim[limite.tipo] = usado + valor; }
+        else lim[limite.tipo] = usado + 1;
       }
       const campos = { ...(limite ? { limitesDia: lim } : {}), ...(extra || {}) };
       if (!c.exists) tx.set(refC, { saldo: valor, itens: [], criadaEm: FieldValue.serverTimestamp(), ...campos });
@@ -64,8 +70,8 @@ async function creditar(uid, chave, valor, motivo, limite = null, extra = null) 
       return true;
     });
     if (ok) { cont.creditos++; cont.moedas += valor; } else cont.pulados++;
-    return ok;
-  } catch (e) { cont.erros++; console.error(`Erro ao creditar ${chave}:`, e.message); return false; }
+    return ok ? valor : 0;
+  } catch (e) { cont.erros++; console.error(`Erro ao creditar ${chave}:`, e.message); return 0; }
 }
 
 // busca o que mudou depois do cursor e devolve o novo cursor
@@ -155,8 +161,85 @@ const etapas = {
       if (ok && dias % 7 === 0) await creditar(uid, `sequencia_${dia}`, 20, `Sequência de ${dias} dias entrando no app`);
     }
     return r;
+  },
+  // jogos: confere cada partida enviada e paga (limite de 30 moedas por dia somando os jogos)
+  async cursorPartidas(cursor) {
+    const r = await novos(db.collection("partidas"), "fimEm", cursor);
+    const semana = semanaBR(Date.now());
+    const ranking = await lerRanking();
+    let mudou = false;
+    for (const d of r.docs) {
+      if (!noTempo()) break;
+      const p = d.data();
+      if (p.status !== "enviada") continue;
+      const jogo = JOGOS[p.jogo];
+      const ini = p.inicioEm && p.inicioEm.toMillis ? p.inicioEm.toMillis() : 0, fim = p.fimEm.toMillis();
+      const seg = (fim - ini) / 1000, pontos = Number.isInteger(p.pontos) ? p.pontos : -1;
+      if (!jogo || !ini || seg <= 0 || seg > 1800 || pontos < 0 || !jogo.plausivel(pontos, seg, p.dados || {})) {
+        await d.ref.update({ status: "recusada" }).catch(() => {}); cont.pulados++; continue;
+      }
+      const previstas = jogo.moedas(pontos);
+      const pagas = previstas > 0 ? await creditar(p.uid, `jogo_${d.id}`, previstas, `${jogo.nome}: ${pontos} ${jogo.unidade}`, { tipo: "jogos", max: 30, soma: true }) : 0;
+      await d.ref.update({ status: "paga", moedas: pagas }).catch(() => {});
+      if (semanaBR(fim) === semana && pontos > 0 && ranking.semana === semana) {
+        if (await entrarNoRanking(ranking, p.jogo, p.uid, pontos, Number(p.dados && p.dados.tempoMedio) || 0, fim)) mudou = true;
+      }
+    }
+    if (mudou) await db.doc("sistema/rankingJogos").set(ranking);
+    return r;
   }
 };
+
+/* ---------- Jogos ---------- */
+const JOGOS = {
+  capivara: { nome: "Capivara Corredora", unidade: "pontos", moedas: (p) => Math.min(15, Math.floor(p / 150)),
+    // velocidade máxima ~33 pontos/s pela distância + itens coletados (o app manda distância e itens)
+    plausivel: (p, seg, dd) => p <= seg * 70 + 100 && (!Number.isFinite(dd.distancia) || Math.floor(dd.distancia / 25) <= p) },
+  capa: { nome: "Adivinhe pela capa", unidade: "acertos", moedas: (p) => Math.min(20, p * 2),
+    plausivel: (p, seg) => p <= 10 && seg >= p * 1.5 }
+};
+// semana começa na segunda-feira (horário de Brasília); a chave é a data da segunda
+function semanaBR(ms) {
+  const dia = diaBR(ms), dow = new Date(dia + "T12:00:00Z").getUTCDay();
+  return somarDias(dia, -((dow + 6) % 7));
+}
+async function lerRanking() {
+  const r = (await db.doc("sistema/rankingJogos").get()).data() || {};
+  return { ...r, semana: r.semana || semanaBR(Date.now()), capivara: r.capivara || [], capa: r.capa || [] };
+}
+const nomesRanking = new Map();
+async function entrarNoRanking(ranking, jogo, uid, pontos, tempo, em) {
+  const lista = ranking[jogo] || (ranking[jogo] = []);
+  const atual = lista.find(x => x.uid === uid);
+  const melhor = (a, b) => a.pontos !== b.pontos ? a.pontos > b.pontos : (a.tempo || 0) !== (b.tempo || 0) ? (a.tempo || 0) < (b.tempo || 0) : a.em < b.em;
+  const novo = { uid, pontos, tempo, em };
+  if (atual && !melhor(novo, atual)) return false;
+  if (!nomesRanking.has(uid)) {
+    const p = await db.doc(`perfis/${uid}`).get();
+    nomesRanking.set(uid, p.exists ? trecho(p.get("nome") || "Membro", 40) : null);
+  }
+  if (!nomesRanking.get(uid)) return false;   // conta excluída
+  const sem = lista.filter(x => x.uid !== uid);
+  sem.push({ ...novo, nome: nomesRanking.get(uid) });
+  sem.sort((a, b) => melhor(a, b) ? -1 : 1);
+  ranking[jogo] = sem.slice(0, 10);
+  return true;
+}
+// virada da semana: paga o Top 3 de cada jogo e começa um ranking novo
+async function viradaRankingJogos() {
+  const ref = db.doc("sistema/rankingJogos"), atual = semanaBR(Date.now());
+  const r = (await ref.get()).data();
+  if (r && r.semana === atual) return;
+  if (r && r.semana) {
+    const PREMIOS = [100, 60, 40];
+    for (const jogo of Object.keys(JOGOS)) {
+      for (const [i, x] of (r[jogo] || []).slice(0, 3).entries()) {
+        await creditar(x.uid, `ranking_${jogo}_${r.semana}`, PREMIOS[i], `${i + 1}º lugar no ranking semanal: ${JOGOS[jogo].nome}`);
+      }
+    }
+  }
+  await ref.set({ semana: atual, capivara: [], capa: [], semanaAnterior: r && r.semana ? { semana: r.semana, capivara: (r.capivara || []).slice(0, 3), capa: (r.capa || []).slice(0, 3) } : null });
+}
 
 // Presente dos testadores alfa para um membro (uma vez só: a linha "alfa" do extrato marca que já recebeu)
 async function presentearAlfa(uid) {
@@ -201,6 +284,7 @@ async function fimDoAlfa() {
 
 (async () => {
   try { await fimDoAlfa(); } catch (e) { cont.erros++; console.error("Erro no fim do alfa:", e.message); }
+  try { await viradaRankingJogos(); } catch (e) { cont.erros++; console.error("Erro no ranking dos jogos:", e.message); }
   const controle = db.doc("sistema/moedasAuto");
   const estado = (await controle.get()).data() || {};
   const padrao = Timestamp.fromMillis(Date.now() - 24 * 3600 * 1000);   // primeira rodada: últimas 24 h
@@ -218,6 +302,13 @@ async function fimDoAlfa() {
       else console.error(`Erro em ${campo}:`, e.message);
     }
   }
+  // limpeza: partidas com mais de 7 dias (já pagas, recusadas ou abandonadas) são apagadas
+  try {
+    if (noTempo()) {
+      const velhas = await db.collection("partidas").where("inicioEm", "<", Timestamp.fromMillis(Date.now() - 7 * 864e5)).limit(400).get();
+      if (velhas.size) { const lote = db.batch(); velhas.docs.forEach(d => lote.delete(d.ref)); await lote.commit(); }
+    }
+  } catch (e) { cont.erros++; console.error("Erro na limpeza das partidas:", e.message); }
   // Top 3 dos curadores: na virada do mês, +200 para cada um
   try {
     const hoje = diaBR(Date.now()), mesAtual = hoje.slice(0, 7);
