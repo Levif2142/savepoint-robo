@@ -154,3 +154,13 @@ a mesma linha repetida 5 vezes ou mais, o mesmo caractere repetido 40 vezes ou m
 - Memória: fica **oculta** até a moderação decidir.
 - Na primeira rodada desta versão, o robô também varre as mensagens e os comentários **antigos** (em partes, se forem muitos). O progresso fica em `/sistema/moderacaoAuto` → `arteVarrida`.
 - O app já bloqueia isso antes de enviar, e as regras do Firestore recusam no servidor.
+
+## Fotos de cartas e action figures na comunidade (`verificar.cjs`)
+
+Membros podem mostrar a foto da própria carta ou action figure junto com uma memória. Nada aparece para os outros sem passar por três etapas:
+
+1. **Declaração** de quem envia: a foto mostra só o item, sem pessoas e sem nudez.
+2. **Robô** (a cada rodada): analisa a foto com o NSFW.js num limite bem rígido (pornô ≥ 10%, hentai ≥ 15% ou sensual ≥ 20%). Qualquer sinal → a foto é **recusada e apagada na hora** e abre uma denúncia "sexual" para a moderação conferir a conta. Sem sinais → grava a análise (`nsfw.ok = true`).
+3. **Moderação**: aprova ou recusa em *Moderação → Fotos da comunidade*. As regras do Firestore só deixam aprovar depois da análise do robô.
+
+A foto fica em `/fotosComunidade/{uid_obraId}`. Quem envia só consegue gravar "pendente"; trocar a foto volta para a fila.

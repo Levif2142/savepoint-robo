@@ -8,6 +8,10 @@
       fonte externa 3 vezes seguidas, deixa para a moderação decidir.
    Se um moderador pedir pelo app ("verificar obras antigas"), também
    verifica as obras cadastradas antes do robô existir.
+   4. Fotos de cartas e action figures que os membros querem mostrar nas memórias
+      (/fotosComunidade, status "pendente"): analisa com o NSFW.js num limite bem rígido.
+      Qualquer sinal de nudez → a foto é RECUSADA e APAGADA na hora e abre uma denúncia.
+      Sem sinais → grava a análise; a foto continua escondida até um moderador aprovar.
    ===================================================================== */
 const admin = require("firebase-admin");
 const tf = require("@tensorflow/tfjs");
@@ -128,6 +132,53 @@ async function checarCapa(o) {
   } finally { tensor.dispose(); }
 }
 
+/* ---------- Fotos da comunidade: detector de nudez com limite rígido ---------- */
+// Bem mais rígido que o das capas: aqui a foto é de um membro e só deveria mostrar uma carta ou um boneco.
+const LIMITE_FOTO = { Porn: 0.10, Hentai: 0.15, Sexy: 0.20 };
+async function analisarFotoComunidade(foto) {
+  const m = /^data:image\/jpeg;base64,(.+)$/.exec(foto || "");
+  if (!m) return { ok: false, motivo: "formato inválido" };
+  let img;
+  try { img = jpeg.decode(Buffer.from(m[1], "base64"), { useTArray: true, formatAsRGBA: false, maxMemoryUsageInMB: 256 }); }
+  catch { return { ok: false, motivo: "imagem ilegível" }; }
+  const tensor = tf.tensor3d(img.data, [img.height, img.width, 3], "int32");
+  try {
+    const p = Object.fromEntries((await (await carregarModelo()).classify(tensor, 5)).map(c => [c.className, c.probability]));
+    const notas = { porn: +(p.Porn || 0).toFixed(3), hentai: +(p.Hentai || 0).toFixed(3), sexy: +(p.Sexy || 0).toFixed(3) };
+    const suspeita = (p.Porn || 0) >= LIMITE_FOTO.Porn || (p.Hentai || 0) >= LIMITE_FOTO.Hentai || (p.Sexy || 0) >= LIMITE_FOTO.Sexy;
+    return { ok: !suspeita, ...notas, motivo: suspeita ? "possível nudez ou conteúdo sensual" : "" };
+  } finally { tensor.dispose(); }
+}
+async function verificarFotosComunidade() {
+  const cont = { fotos: 0, recusadas: 0 };
+  const snap = await db.collection("fotosComunidade").where("status", "==", "pendente").limit(60).get();
+  for (const d of snap.docs) {
+    const f = d.data();
+    if (f.nsfw) continue;   // já analisada: aguardando a moderação
+    let r;
+    try { r = await analisarFotoComunidade(f.foto); } catch (e) { console.error(`Erro na foto ${d.id}:`, e.message); continue; }
+    cont.fotos++;
+    const nsfw = { ok: r.ok, porn: r.porn ?? null, hentai: r.hentai ?? null, sexy: r.sexy ?? null, em: FieldValue.serverTimestamp() };
+    // a foto pode ter sido trocada enquanto o robô analisava: só grava se ainda for a mesma
+    await db.runTransaction(async (tx) => {
+      const atual = await tx.get(d.ref);
+      if (!atual.exists || atual.get("status") !== "pendente" || atual.get("foto") !== f.foto) return;
+      if (r.ok) { tx.update(d.ref, { nsfw }); return; }
+      tx.update(d.ref, { nsfw, status: "recusada", foto: FieldValue.delete(), revisadoPor: "robo", revisadoEm: FieldValue.serverTimestamp(),
+        motivo: "Recusada automaticamente: a análise encontrou " + r.motivo + ". A foto foi apagada." });
+      tx.set(db.doc(`denuncias/robo_foto_${d.id}_${Date.now()}`), {
+        autor: "robo", origem: "robo", tipo: "memoria", alvoId: d.id, alvoUid: f.uid || "", motivo: "sexual", nivel: "grave", termos: [r.motivo],
+        detalhe: `Foto de carta/action figure recusada e apagada pelo robô (${r.motivo}; pornô ${r.porn ?? "?"}, hentai ${r.hentai ?? "?"}, sensual ${r.sexy ?? "?"}). Confira a conta.`,
+        resumo: "Tentativa de mostrar uma foto imprópria na comunidade", status: "aberta", criadoEm: FieldValue.serverTimestamp()
+      });
+    });
+    if (!r.ok) cont.recusadas++;
+    // por privacidade, o registro público do GitHub mostra só o ID e o resultado
+    console.log(`• foto ${d.id} → ${r.ok ? "sem sinais (aguarda a moderação)" : "RECUSADA e apagada"}`);
+  }
+  return cont;
+}
+
 /* ---------- decisão ---------- */
 async function verificar(o) {
   const tarefas = [checarPalavras(o), checarCapa(o)];
@@ -139,8 +190,8 @@ async function verificar(o) {
   const adulto = fontes.some(f => f.adulto);
   // Filmes e livros: se a base externa não responder, a capa analisada também vale como verificação.
   // Animes, mangás e manhwas precisam do AniList (as capas são desenhos, onde o modelo erra mais).
-  // Jogos e cartas (TCG) não têm base pública de classificação: valem capa e palavras-chave (e a moderação)
-  const capaVale = ["filme", "livro", "serie", "jogo", "carta"].includes(o.categoria);
+  // Jogos, cartas (TCG) e action figures não têm base pública de classificação: valem capa e palavras-chave (e a moderação)
+  const capaVale = ["filme", "livro", "serie", "jogo", "carta", "figure"].includes(o.categoria);
   const decisivas = fontes.filter(f => f.consultada && (f.externa || (capaVale && f.fonte.startsWith("capa"))));
   return { status: adulto ? "adulto" : decisivas.length ? "livre" : "indefinido", fontes };
 }
@@ -197,13 +248,15 @@ async function aplicar(ref, obra, { status, fontes }) {
     // obras cadastradas antes do robô: não têm o campo "visibilidade"
     (await db.collection("obras").get()).docs.filter(d => !d.data().visibilidade).forEach(d => alvos.set(d.id, d));
   }
-  const cont = { verificadas: 0, adultas: 0, livres: 0, indefinidas: 0 };
+  const cont = { verificadas: 0, adultas: 0, livres: 0, indefinidas: 0, fotos: 0, fotosRecusadas: 0 };
   for (const d of alvos.values()) {
     try {
       const st = await aplicar(d.ref, d.data(), await verificar(d.data()));
       cont.verificadas++; cont[{ adulto: "adultas", livre: "livres", indefinido: "indefinidas" }[st]]++;
     } catch (e) { console.error(`Erro ao verificar ${d.id}:`, e.message); }
   }
+  try { const f = await verificarFotosComunidade(); cont.fotos = f.fotos; cont.fotosRecusadas = f.recusadas; }
+  catch (e) { console.error("Erro nas fotos da comunidade:", e.message); }
   await controle.set({
     ultimaRodada: FieldValue.serverTimestamp(), ultimoResultado: cont,
     ...(pedido.verificarAntigas ? { verificarAntigas: false } : {})
