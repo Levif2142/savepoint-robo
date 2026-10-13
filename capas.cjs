@@ -3,7 +3,7 @@
    Quando o navegador não consegue baixar a capa de uma obra (o site da imagem não deixa),
    o app guarda o link em "capaPendente". Aqui no servidor não existe essa trava: o robô baixa,
    reduz para 360 × 540, converte em JPEG e grava em "capa" (o mesmo formato que o app usa).
-   Só aceita links dos sites conhecidos (AniList, Open Library, TVmaze, Google Books, Wikipédia).
+   Só aceita links dos sites conhecidos (AniList, Open Library, TVmaze, Google Books, Wikipédia e as bases de cartas TCG).
    ===================================================================== */
 const admin = require("firebase-admin");
 const sharp = require("sharp");
@@ -14,7 +14,7 @@ admin.initializeApp({ credential: admin.credential.cert(JSON.parse(conta)) });
 const db = admin.firestore();
 const { FieldValue } = admin.firestore;
 
-const LINK_OK = /^https:\/\/(s4\.anilist\.co|covers\.openlibrary\.org|static\.tvmaze\.com|books\.google\.com|upload\.wikimedia\.org)\/[^\s"<>]{1,380}$/;
+const LINK_OK = /^https:\/\/(s4\.anilist\.co|covers\.openlibrary\.org|static\.tvmaze\.com|books\.google\.com|upload\.wikimedia\.org|images\.pokemontcg\.io|cards\.scryfall\.io|images\.ygoprodeck\.com)\/[^\s"<>]{1,380}$/;
 const POR_RODADA = 40;
 const MAX_TENTATIVAS = 3;
 const LIMITE_CAPA = 400000;   // mesmo limite das regras do Firestore (capaValida)

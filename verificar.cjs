@@ -139,8 +139,8 @@ async function verificar(o) {
   const adulto = fontes.some(f => f.adulto);
   // Filmes e livros: se a base externa não responder, a capa analisada também vale como verificação.
   // Animes, mangás e manhwas precisam do AniList (as capas são desenhos, onde o modelo erra mais).
-  // Jogos não têm base pública de classificação: valem capa e palavras-chave (e a moderação)
-  const capaVale = ["filme", "livro", "serie", "jogo"].includes(o.categoria);
+  // Jogos e cartas (TCG) não têm base pública de classificação: valem capa e palavras-chave (e a moderação)
+  const capaVale = ["filme", "livro", "serie", "jogo", "carta"].includes(o.categoria);
   const decisivas = fontes.filter(f => f.consultada && (f.externa || (capaVale && f.fonte.startsWith("capa"))));
   return { status: adulto ? "adulto" : decisivas.length ? "livre" : "indefinido", fontes };
 }
