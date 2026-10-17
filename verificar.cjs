@@ -48,7 +48,7 @@ const bateNome = (titulos, obra) => {
 /* ---------- 1) Palavras-chave (mesma lista do app) ---------- */
 const PALAVRAS = /(?:^|[^\p{L}\p{N}])(hentai|porn[oô]?|pornogr[aá]fic[oa]s?|pornografia|xxx|nsfw|r-?18|18\s*\+|\+\s*18|er[oó]tic[oa]s?|sexo expl[ií]cito)(?=$|[^\p{L}\p{N}])/iu;
 function checarPalavras(o) {
-  const achou = [...nomesDaObra(o), ...(o.generos || []), o.tipo || ""].join(" | ").match(PALAVRAS);
+  const achou = [...nomesDaObra(o), ...(o.generos || []), o.tipo || "", String(o.descricao || "").slice(0, 4000)].join(" | ").match(PALAVRAS);
   return { fonte: "palavras-chave", externa: false, consultada: true, adulto: !!achou, detalhe: achou ? `termo "${achou[1]}"` : "nenhum termo" };
 }
 
